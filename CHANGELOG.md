@@ -6,6 +6,11 @@ Notable changes to Farol. The format follows [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Remove a conversation from Farol's history without changing the agent's saved conversation. Refreshing keeps the record out of the list.
+- Conversation history updates while open and has a refresh button. It also shows local Kiro V3 conversations when Kiro's list omits them.
+- Kiro CLI V3 resumes the active conversation in its original pane when Farol opens, if Resume agent conversations is on.
+- Conversation history for connected agents and Kiro CLI. Search by conversation or project, then click Continue to open the same conversation in its original folder.
+- Kiro CLI in Settings → Agents and New Task. Its interactive terminal reports when it is working, waiting for you or done without installing hooks.
 - Notes for the agent in the review panel. On your own changes, click the + beside a line, or select lines and right-click, and leave a note. Notes wait under their lines until you send them all to the session's agent in one message with one click, or send one at once with ⇧⌘↩. Each note quotes its lines, so it follows them as the agent edits the file. A sent note fades until you resolve it. The Send button shows the agent it goes to, and with no agent in the session the notes just wait. Notes are kept across launches. On a pull request of the session's own branch, a reviewer's comments go to the agent with Send to Claude Code under them.
 
 ## [0.64.0] - 2026-11-07

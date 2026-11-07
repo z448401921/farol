@@ -100,7 +100,7 @@ final class PaneContainer: NSView {
     }
 
     /// Rebuilds saved panes. `make` creates a terminal in a folder, given the conversation its agent had. A file that is gone leaves its space to its neighbor.
-    init(_ layout: PaneLayout, make: (String, AgentConversation?) -> TerminalView) {
+    init(_ layout: PaneLayout, make: (String, PaneResume?) -> TerminalView) {
         var names: [(TerminalView, String)] = []
         var files: (paths: [String], active: Int)?
         let placeholder = Node(nil)
@@ -143,7 +143,7 @@ final class PaneContainer: NSView {
         for (terminal, name) in names { labels[terminal.id] = makeLabel(for: terminal, name: name) }
     }
 
-    func layoutSnapshot(conversations: [UUID: AgentConversation]) -> PaneLayout {
+    func layoutSnapshot(conversations: [UUID: PaneResume]) -> PaneLayout {
         func snapshot(_ node: Node) -> PaneLayout {
             if let terminal = node.terminal {
                 return .terminal(directory: terminal.workingDirectory ?? NSHomeDirectory(), name: labels[terminal.id]?.name,
@@ -970,7 +970,7 @@ final class PaneContainer: NSView {
 /// A session's panes as saved between launches: each terminal's folder, name and agent conversation, the open file, and each split's direction and share.
 indirect enum PaneLayout: Codable {
     /// `name` and `conversation` are optional, so layouts saved before them still load.
-    case terminal(directory: String, name: String? = nil, conversation: AgentConversation? = nil)
+    case terminal(directory: String, name: String? = nil, conversation: PaneResume? = nil)
     /// A layout saved before tabs, read as one tab.
     case file(path: String)
     case files(paths: [String], active: Int)

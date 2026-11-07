@@ -46,9 +46,9 @@ ditto "$root/.build/$config/Sparkle.framework" "$sparkle"
 rm -rf "$sparkle/XPCServices" "$sparkle/Versions/B/XPCServices"
 install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/Farol"
 
-# Only release builds update themselves. A dev build would otherwise offer to replace itself with the latest release.
+# Keep upstream updates off for debug builds and local releases that opt out.
 updates=""
-if [ "$config" = "release" ]; then
+if [ "$config" = "release" ] && [ "${FAROL_AUTO_UPDATES:-1}" = "1" ]; then
   updates="<key>SUFeedURL</key><string>https://github.com/snowztech/farol/releases/latest/download/appcast.xml</string>
   <key>SUPublicEDKey</key><string>W35LvPDPqwRFtl8eT1HqPkOjqOv/XU7bwVd9e5CbADs=</string>
   <key>SUEnableAutomaticChecks</key><true/>"

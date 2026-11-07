@@ -23,7 +23,7 @@ struct SettingsPage: View {
     @State private var relayDraft: String?
     @State private var versionCopied = false
     /// One setup per agent config folder, with each one's state by id.
-    @State private var agentSetups: [AgentSetup] = []
+    @State private var agentSetups: [(folder: AgentFolder, setup: AgentSetup)] = []
     @State private var agentFolders = AgentFolder.find()
     @State private var setups: [String: AgentSetup.State] = [:]
     @State private var agentChange: AgentChange?
@@ -389,7 +389,13 @@ struct SettingsPage: View {
 
         GroupTitle(title: "Status", first: true, palette: p)
         Card(palette: p) {
-            ForEach(Array(agentSetups.enumerated()), id: \.element.id) { agentRow($0.element, in: agentFolders[$0.offset], p) }
+            ForEach(agentSetups, id: \.setup.id) { agentRow($0.setup, in: $0.folder, p) }
+            let path = AgentFolder.Kind.kiro.executable.map { ($0 as NSString).abbreviatingWithTildeInPath }
+            Row(title: AgentFolder.Kind.kiro.title, detail: path ?? "Not found", mono: path != nil,
+                icon: ToolTile(agent: .kiro, size: 26), palette: p) {
+                Badge(text: path == nil ? "Not installed" : "Built in", tint: path == nil ? nil : p.done, dot: true, palette: p)
+                    .hoverTip("Kiro reports its status directly from its terminal.")
+            }
         }
 
         GroupTitle(title: "Agents working together", palette: p)
@@ -409,7 +415,7 @@ struct SettingsPage: View {
         GroupTitle(title: "When Farol opens", palette: p)
         Card(palette: p) {
             Row(title: "Resume agent conversations",
-                detail: "Agents that were running when Farol quit pick up where they left off, in the same panes. Needs the agent connected above.",
+                detail: "Agents that were running when Farol quit pick up where they left off, in the same panes. Connect other agents above. Kiro CLI V3 works out of the box.",
                 palette: p) {
                 toggle($agents.resume)
             }
@@ -732,8 +738,10 @@ struct SettingsPage: View {
             DispatchQueue.main.async { notificationsBlocked = blocked }
         }
         agentFolders = AgentFolder.find()
-        agentSetups = AgentSetup.all(folders: agentFolders)
-        for agent in agentSetups { setups[agent.id] = agent.state() }
+        agentSetups = agentFolders.compactMap { folder in
+            AgentSetup.setup(for: folder).map { (folder, $0) }
+        }
+        for (_, agent) in agentSetups { setups[agent.id] = agent.state() }
         guard section == .integrations else { return }
         DispatchQueue.global(qos: .userInitiated).async {
             let states = Dictionary(uniqueKeysWithValues: Forge.Kind.allCases.map { ($0, $0.toolState()) })

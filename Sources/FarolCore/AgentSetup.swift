@@ -25,13 +25,16 @@ public struct AgentSetup {
     var refresh: () -> Void = {}
 
     public static func all(folders: [AgentFolder] = AgentFolder.find()) -> [AgentSetup] {
-        folders.map { folder in
-            switch folder.kind {
-            case .claude: claude(hooks: .claude(in: folder))
-            case .codex: codex(config: folder.directory.appendingPathComponent("config.toml"), hooks: .codex(in: folder))
-            case .opencode: plugin(.opencode(in: folder), for: folder)
-            case .pi: plugin(.pi(in: folder), for: folder)
-            }
+        folders.compactMap(setup(for:))
+    }
+
+    public static func setup(for folder: AgentFolder) -> AgentSetup? {
+        switch folder.kind {
+        case .claude: claude(hooks: .claude(in: folder))
+        case .codex: codex(config: folder.directory.appendingPathComponent("config.toml"), hooks: .codex(in: folder))
+        case .opencode: plugin(.opencode(in: folder), for: folder)
+        case .pi: plugin(.pi(in: folder), for: folder)
+        case .kiro: nil
         }
     }
 

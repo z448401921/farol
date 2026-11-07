@@ -63,8 +63,12 @@ struct SidebarView: View {
                 TasksPane(scheduler: scheduler, store: store, palette: p)
             }
             // Pinned below the list, so it stays in the same place however many sessions there are.
-            NewTaskRow(palette: p, action: commands.newTask)
-                .padding(8)
+            VStack(spacing: 2) {
+                SidebarActionRow(title: "Conversation history", icon: "clock.arrow.circlepath", shortcut: "⇧⌘H",
+                                 palette: p, action: commands.showConversationHistory)
+                SidebarActionRow(title: "New task", icon: "plus", shortcut: "⇧⌘N", palette: p, action: commands.newTask)
+            }
+            .padding(8)
         }
         // Reaching a session in a folded project, with ⌘1 to ⌘9, a notification or a new session, opens the project so the row is there.
         // A new session's repo is found a moment after it's selected, so the repo is watched too.
@@ -489,7 +493,10 @@ extension Schedule {
     }
 }
 
-private struct NewTaskRow: View {
+private struct SidebarActionRow: View {
+    let title: String
+    let icon: String
+    let shortcut: String
     let palette: Palette
     let action: () -> Void
 
@@ -504,14 +511,14 @@ private struct NewTaskRow: View {
     private var label: some View {
         HStack(spacing: 10) {
             // Same width as the status dots, so the label lines up with session names.
-            Image(systemName: "plus")
+            Image(systemName: icon)
                 .font(.system(size: 9, weight: .semibold))
                 .frame(width: Lamp.size)
-            Text("New task")
+            Text(title)
                 .font(.system(size: 13))
             Spacer(minLength: 0)
             if hovering {
-                Text("⇧⌘N")
+                Text(shortcut)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(palette.muted)
             }

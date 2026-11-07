@@ -80,14 +80,14 @@ public enum CommitMessage {
                        "--no-session-persistence", "--output-format", "text"]
         // ponytail: not tried against a real Codex yet. "-" reads the prompt from stdin, read-only keeps it from editing.
         case .codex: ["exec", "--sandbox", "read-only", "--skip-git-repo-check", "-"]
-        case .opencode, .pi: nil
+        case .opencode, .pi, .kiro: nil
         }
     }
 
     static func environment(for agent: AgentFolder) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         environment["PATH"] = (AgentFolder.Kind.installFolders + [environment["PATH"] ?? "/usr/bin:/bin"]).joined(separator: ":")
-        if !agent.isDefault { environment[agent.kind.environmentVariable] = agent.directory.path }
+        if !agent.isDefault, let variable = agent.kind.environmentVariable { environment[variable] = agent.directory.path }
         return environment
     }
 

@@ -100,7 +100,7 @@ public enum Ports {
     }
 
     /// Every process's parent, in one call.
-    private static func parents() -> [pid_t: pid_t] {
+    static func parents() -> [pid_t: pid_t] {
         var query: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
         var size = 0
         guard sysctl(&query, 4, nil, &size, nil, 0) == 0 else { return [:] }

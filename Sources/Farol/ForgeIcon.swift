@@ -28,6 +28,7 @@ struct ForgeIcon: View {
         case .codex: Self.openai
         case .opencode: Self.opencode
         case .pi: Self.pi
+        case .kiro: Self.kiro
         }
         self.size = size
     }
@@ -50,10 +51,15 @@ struct ForgeIcon: View {
     private static let opencode = mark(viewBox: 24, path: "M4 2h16v20H4zM8 6v12h8V6z")
     // Pi's own mark, from the favicon at pi.dev.
     private static let pi = mark(viewBox: 560, path: "M420 280H280V140H0V0H420V280ZM560 560H420V280H560V560ZM140 560H0V140H140V280H280V420H140V560Z")
+    private static let kiro = mark(viewBox: 24, path: "M4 3h4v8l7-8h5l-8 9 8 9h-5l-7-8v8H4z")
 
     /// Each maker's own color, so the tile is known at a glance. The ones whose mark is black and white get graphite.
     static func color(agent: AgentFolder.Kind) -> Color {
-        agent == .claude ? Color(red: 0.85, green: 0.47, blue: 0.34) : graphite
+        switch agent {
+        case .claude: Color(red: 0.85, green: 0.47, blue: 0.34)
+        case .kiro: Color(red: 0.48, green: 0.26, blue: 0.85)
+        default: graphite
+        }
     }
 
     static func color(kind: Forge.Kind) -> Color {

@@ -1,7 +1,9 @@
 .build/
 .ghostty-src/
+/.ghostty.zip
 vendor/
 .DS_Store
 build/
+/.codex/hooks.json
 .claude/settings.local.json
 RELEASING.md

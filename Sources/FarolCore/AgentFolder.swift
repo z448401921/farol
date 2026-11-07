@@ -1,11 +1,11 @@
 import Foundation
 
 /// One config folder of a coding agent. Someone with a work and a personal account has several.
-public struct AgentFolder: Equatable, Hashable {
+public struct AgentFolder: Equatable, Hashable, Sendable {
     /// Every agent Farol knows. What differs between them is answered here, so adding one starts with a case.
     /// The compiler then names each place that has to say how the new agent does it.
-    public enum Kind: String, CaseIterable {
-        case claude, codex, opencode, pi
+    public enum Kind: String, CaseIterable, Sendable {
+        case claude, codex, opencode, pi, kiro
 
         public var title: String {
             switch self {
@@ -13,15 +13,17 @@ public struct AgentFolder: Equatable, Hashable {
             case .codex: "Codex"
             case .opencode: "OpenCode"
             case .pi: "Pi"
+            case .kiro: "Kiro CLI"
             }
         }
 
-        var environmentVariable: String {
+        var environmentVariable: String? {
             switch self {
             case .claude: "CLAUDE_CONFIG_DIR"
             case .codex: "CODEX_HOME"
             case .opencode: "OPENCODE_CONFIG_DIR"
             case .pi: "PI_CODING_AGENT_DIR"
+            case .kiro: nil
             }
         }
 
@@ -32,6 +34,7 @@ public struct AgentFolder: Equatable, Hashable {
             case .codex: ".codex"
             case .opencode: ".config/opencode"
             case .pi: ".pi/agent"
+            case .kiro: ".kiro"
             }
         }
 
@@ -41,6 +44,7 @@ public struct AgentFolder: Equatable, Hashable {
             case .claude, .pi: "settings.json"
             case .codex: "config.toml"
             case .opencode: "opencode.json"
+            case .kiro: "settings/cli.json"
             }
         }
 
@@ -49,7 +53,12 @@ public struct AgentFolder: Equatable, Hashable {
 
         /// What starts it on a first prompt, as words for a shell.
         func prompt(_ task: String) -> [String] {
-            (self == .opencode ? ["--prompt"] : []) + [NewTask.shellQuoted(task)]
+            let flags = switch self {
+            case .opencode: ["--prompt"]
+            case .kiro: ["--"]
+            default: [String]()
+            }
+            return flags + [NewTask.shellQuoted(task)]
         }
 
         /// What picks a conversation up where it stopped, as words for a shell.
@@ -58,16 +67,26 @@ public struct AgentFolder: Equatable, Hashable {
             case .claude: "--resume"
             case .codex: "resume"
             case .opencode, .pi: "--session"
+            case .kiro: "--resume-id"
             }
             return [flag, NewTask.shellQuoted(id)]
         }
 
         /// An app opened from the Finder doesn't get the shell's PATH, so the agent is looked for where its installers put it.
-        static let installFolders = [NSHomeDirectory() + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", NSHomeDirectory() + "/.claude/local",
-                                     NSHomeDirectory() + "/.opencode/bin"]
+        static var installFolders: [String] { installFolders(in: NSHomeDirectory()) }
+
+        private static func installFolders(in home: String) -> [String] {
+            [home + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", home + "/.claude/local", home + "/.opencode/bin"]
+        }
+
+        public var executableName: String { self == .kiro ? "kiro-cli" : rawValue }
 
         public var executable: String? {
-            Self.installFolders.map { "\($0)/\(rawValue)" }.first(where: FileManager.default.isExecutableFile(atPath:))
+            executable(in: NSHomeDirectory())
+        }
+
+        func executable(in home: String) -> String? {
+            Self.installFolders(in: home).map { "\($0)/\(executableName)" }.first(where: FileManager.default.isExecutableFile(atPath:))
         }
     }
 
@@ -122,12 +141,23 @@ public struct AgentFolder: Equatable, Hashable {
         line(kind.resume(id))
     }
 
-    private func line(_ words: [String]) -> String {
-        ([launcher] + words).joined(separator: " ")
+    /// The history may belong to a different account from the one the login shell selects.
+    func resumeFromHistory(_ id: String) -> String {
+        line(kind.resume(id), pinConfig: true)
     }
 
-    private var launcher: String {
-        isDefault ? kind.rawValue : "\(kind.environmentVariable)=\(NewTask.shellQuoted(directory.path)) \(kind.rawValue)"
+    private func line(_ words: [String], pinConfig: Bool = false) -> String {
+        ([launcher(pinConfig: pinConfig)] + words).joined(separator: " ")
+    }
+
+    private func launcher(pinConfig: Bool) -> String {
+        if kind == .kiro {
+            let path = kind.executable(in: directory.deletingLastPathComponent().path)
+            return (path.map(NewTask.shellQuoted) ?? kind.executableName) + " chat"
+        }
+        let executable = (pinConfig ? kind.executable.map(NewTask.shellQuoted) : nil) ?? kind.executableName
+        guard pinConfig || !isDefault, let variable = kind.environmentVariable else { return executable }
+        return "\(variable)=\(NewTask.shellQuoted(directory.path)) \(executable)"
     }
 
     /// The default folder, every `<default>-*` folder beside it that holds the agent's config file, and the folder the environment names.
@@ -137,6 +167,9 @@ public struct AgentFolder: Equatable, Hashable {
         let manager = FileManager.default
         return Kind.allCases.flatMap { kind -> [AgentFolder] in
             let base = home.appendingPathComponent(kind.defaultFolder)
+            guard let variable = kind.environmentVariable else {
+                return kind.executable(in: home.path) == nil ? [] : [AgentFolder(kind: kind, directory: base)]
+            }
             let prefix = base.lastPathComponent + "-"
             let names = (try? manager.contentsOfDirectory(atPath: base.deletingLastPathComponent().path)) ?? []
             var directories = kind.listedWhenMissing || manager.fileExists(atPath: base.path) ? [base] : []
@@ -144,7 +177,7 @@ public struct AgentFolder: Equatable, Hashable {
                 .filter { $0.hasPrefix(prefix) && $0.count > prefix.count }
                 .map { base.deletingLastPathComponent().appendingPathComponent($0, isDirectory: true) }
                 .filter { manager.fileExists(atPath: $0.appendingPathComponent(kind.configFile).path) }
-            if let value = environment[kind.environmentVariable], !value.isEmpty {
+            if let value = environment[variable], !value.isEmpty {
                 directories.append(URL(fileURLWithPath: value, isDirectory: true))
             }
             var seen = Set<String>()

@@ -6,7 +6,7 @@ import Foundation
 enum Control {
     static let usage = """
     usage: farol sessions [--json]
-           farol task <what to do> [--agent claude|codex] [--repo <folder>] [--json]
+           farol task <what to do> [--agent claude|codex|opencode|pi|kiro] [--repo <folder>] [--json]
            farol send <session> <message>
            farol wait <session> [--timeout <seconds>] [--json]
            farol read <session>

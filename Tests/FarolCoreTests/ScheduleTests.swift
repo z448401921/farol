@@ -82,7 +82,10 @@ private func schedule(_ weekdays: Set<Int> = Schedule.everyDay, since: Date) -> 
     let daily = schedule(since: at(6, 9, 1))
     #expect(!daily.upcoming(at: at(6, 8), calendar: calendar).hasPrefix("tmrw"))
     #expect(daily.upcoming(at: at(6, 10), calendar: calendar).hasPrefix("tmrw "))
-    #expect(schedule(Schedule.workweek, since: at(6, 9, 1)).upcoming(at: at(6, 10), calendar: calendar).hasPrefix("Mon"))
+    var weekday = Date.FormatStyle().weekday(.abbreviated)
+    weekday.timeZone = calendar.timeZone
+    let monday = at(9, 9).formatted(weekday)
+    #expect(schedule(Schedule.workweek, since: at(6, 9, 1)).upcoming(at: at(6, 10), calendar: calendar).hasPrefix("\(monday) "))
 }
 
 /// Mondays and Thursdays: Friday the 6th's next run is Monday the 9th, then Thursday the 12th.

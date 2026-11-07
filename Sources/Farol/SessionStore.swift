@@ -25,7 +25,7 @@ final class Session: ObservableObject, Identifiable {
     /// A phone shows it while the agent's log has nothing yet, as Claude Code writes its log only once a turn is under way.
     var prompts: [UUID: String] = [:]
     /// Each pane's conversation while its agent runs, saved so the next launch resumes it there.
-    var conversations: [UUID: AgentConversation] = [:]
+    var conversations: [UUID: PaneResume] = [:]
     /// What a waiting agent asks, and the pane it waits in, so an answer from a phone goes there and nowhere else.
     @Published var request: (pane: UUID, asked: AgentRequest)?
     /// A question the agent is blocked on, which Farol can answer through the agent's hook.
@@ -190,6 +190,7 @@ final class Session: ObservableObject, Identifiable {
     /// Claude Code's process is named after its version, so its log says it is Claude Code.
     func agent(in terminal: TerminalView) -> String? {
         guard let name = terminal.foregroundProgram?.name, !["zsh", "bash", "fish", "sh", "login"].contains(name) else { return nil }
+        if name == AgentFolder.Kind.kiro.executableName { return AgentFolder.Kind.kiro.rawValue }
         if AgentFolder.Kind(rawValue: name) != nil { return name }
         return logs[terminal.id].flatMap { AgentFolder(log: $0.log) }?.kind.rawValue ?? name
     }
@@ -363,6 +364,7 @@ final class SessionStore: ObservableObject {
     private let statusServer: StatusServer
     private let cliPath: String
     private var stops: Timer?
+    private var preparingToQuit = false
 
     /// `socketPath` is where `farol status` reports. Each app build gets its own, so dev builds never mix with yours.
     init(runtime: TerminalRuntime, socketPath: String) {
@@ -410,11 +412,12 @@ final class SessionStore: ObservableObject {
         let resumable = session.conversations[pane]
         if let conversation = message.conversation {
             session.logs[pane] = conversation
-            session.conversations[pane] = conversation
+            session.conversations[pane] = PaneResume(conversation)
         }
         // The agent ended, so there is nothing to resume. Codex also sends this when you interrupt a turn, and its next prompt brings it back.
         if message.event == .clear {
-            session.conversations[pane] = nil
+            // Kiro can clear the lamp while its interactive command still runs.
+            if session.conversations[pane]?.isKiro != true { session.conversations[pane] = nil }
             session.prompts[pane] = nil
         }
         if let prompt = message.prompt { session.prompts[pane] = prompt }
@@ -441,8 +444,9 @@ final class SessionStore: ObservableObject {
                 guard let self, let session, let terminal, let found else { return }
                 // Also for a session restored with this conversation already saved, which a phone could not read until now.
                 session.logs[terminal.id] = found
-                guard session.conversations[terminal.id] != found else { return }
-                session.conversations[terminal.id] = found
+                let resume = PaneResume(found)
+                guard session.conversations[terminal.id] != resume else { return }
+                session.conversations[terminal.id] = resume
                 self.save()
             }
         }
@@ -450,11 +454,40 @@ final class SessionStore: ObservableObject {
 
     /// An agent still running keeps its conversation for the next launch.
     /// A pane back at its shell prompt had its agent end, which Codex's interactive TUI never reports, and an agent killed outright couldn't.
-    func prepareToQuit() {
+    func prepareToQuit(_ completion: @escaping () -> Void) {
+        preparingToQuit = true
+        let resume = UserDefaults.standard.object(forKey: AgentSettings.resumeKey) as? Bool ?? true
+        var kiro: [UUID: (pid: Int32, started: Date, directory: String?)] = [:]
         for session in sessions {
-            for terminal in session.panes.terminals where !terminal.runsProgram { session.conversations[terminal.id] = nil }
+            for terminal in session.panes.terminals {
+                if resume, let program = terminal.foregroundProgram,
+                   program.name == AgentFolder.Kind.kiro.executableName || program.name == AgentFolder.Kind.kiro.rawValue {
+                    kiro[terminal.id] = (program.pid, program.started, terminal.workingDirectory)
+                } else if session.conversations[terminal.id]?.isKiro == true || !terminal.runsProgram {
+                    session.conversations[terminal.id] = nil
+                }
+            }
         }
-        save()
+        guard !kiro.isEmpty else {
+            save()
+            completion()
+            return
+        }
+
+        // Ask each live runtime before closing the terminal that owns it.
+        let panes = kiro
+        DispatchQueue.global(qos: .userInitiated).async {
+            let active = panes.compactMapValues { KiroActiveConversation.read(pid: $0.pid, started: $0.started, directory: $0.directory) }
+            DispatchQueue.main.async {
+                for session in self.sessions {
+                    for terminal in session.panes.terminals where panes[terminal.id] != nil {
+                        session.conversations[terminal.id] = active[terminal.id]
+                    }
+                }
+                self.save()
+                completion()
+            }
+        }
     }
 
     private func receiveAsk(_ message: AskMessage, _ connection: HeldConnection) {
@@ -524,6 +557,39 @@ final class SessionStore: ObservableObject {
                 repo: String? = nil) -> Session {
         create(PaneContainer(makeTerminal(in: directory, run: run, environment: environment)), directory: directory, select: select,
                repo: repo)
+    }
+
+    func continueConversation(_ entry: ConversationHistory.Entry) throws {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: entry.directory, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw GitError(description: "The conversation's folder is unavailable: \(entry.directory)")
+        }
+
+        let conversation = entry.log.map { AgentConversation(id: entry.id, log: $0) }
+        if let conversation {
+            let log = URL(fileURLWithPath: conversation.log).resolvingSymlinksInPath()
+            for session in sessions {
+                let pane = session.panes.terminals.first {
+                    guard let current = session.conversations[$0.id]?.loggedConversation,
+                          current.id == conversation.id, $0.runsProgram else { return false }
+                    return URL(fileURLWithPath: current.log).resolvingSymlinksInPath() == log
+                }
+                if let pane {
+                    select(session)
+                    session.panes.focus(pane)
+                    return
+                }
+            }
+        }
+
+        let session = create(directory: entry.directory, run: entry.resumeCommand, select: false)
+        if let conversation, let agent = AgentFolder(log: conversation.log), agent.kind == entry.agent.kind,
+           agent.directory.resolvingSymlinksInPath().path == entry.agent.directory.resolvingSymlinksInPath().path {
+            let pane = session.panes.focused.id
+            session.conversations[pane] = PaneResume(conversation)
+            session.logs[pane] = conversation
+        }
+        select(session)
     }
 
     /// An agent on `task` in a new worktree of the repository each of `directories` is in, on a branch no other has, with the task as its first prompt.
@@ -643,6 +709,24 @@ final class SessionStore: ObservableObject {
     /// Every terminal reports to its session, but only the focused pane decides what the session shows.
     private func wire(_ terminal: TerminalView, to session: Session) {
         onTerminalCreated?(terminal)
+        var kiroStatus: KiroStatus?
+        terminal.onProgramStatus = { [weak self, weak terminal] report in
+            guard let self, let terminal, let status = KiroStatus(report, continuing: kiroStatus != nil),
+                  status != kiroStatus else { return }
+            kiroStatus = status.event == .clear ? nil : status
+            let request = status.asking.map { AgentRequest(id: UUID().uuidString, title: $0) }
+            receive(StatusMessage(pane: terminal.id.uuidString, event: status.event, request: request))
+        }
+        terminal.onCommandFinished = { [weak self, weak session, weak terminal] in
+            guard let self, let session, let terminal else { return }
+            if !preparingToQuit, session.conversations[terminal.id]?.isKiro == true {
+                session.conversations[terminal.id] = nil
+                save()
+            }
+            guard let status = kiroStatus else { return }
+            kiroStatus = nil
+            if status.event != .done { receive(StatusMessage(pane: terminal.id.uuidString, event: .clear)) }
+        }
         var previousTitle = terminal.title
         terminal.onTitleChange = { [weak self, weak session, weak terminal] in
             guard let self, let session, let terminal else { return }
@@ -708,14 +792,13 @@ final class SessionStore: ObservableObject {
         // On unless turned off, without counting on Settings to have registered the default first.
         let resume = defaults.object(forKey: AgentSettings.resumeKey) as? Bool ?? true
         for entry in usable {
-            var resumed: [UUID: AgentConversation] = [:]
+            var resumed: [UUID: PaneResume] = [:]
             let panes = PaneContainer(entry.layout) { directory, conversation in
-                // Only in its own folder, where the agent finds the conversation, and only while its log is still there.
-                guard resume, exists(directory), let conversation, exists(conversation.log),
-                      let agent = AgentFolder(log: conversation.log) else {
+                let workingDirectory = conversation?.workingDirectory ?? directory
+                guard resume, exists(workingDirectory), let conversation, let command = conversation.command() else {
                     return self.makeTerminal(in: exists(directory) ? directory : NSHomeDirectory())
                 }
-                let terminal = self.makeTerminal(in: directory, run: agent.resume(conversation.id))
+                let terminal = self.makeTerminal(in: workingDirectory, run: command)
                 resumed[terminal.id] = conversation
                 return terminal
             }

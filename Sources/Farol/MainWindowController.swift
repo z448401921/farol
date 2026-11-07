@@ -108,6 +108,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let commands = Commands(
             newSession: { [weak self] in self?.newSession() },
             newTask: { [weak self] in self?.newTask() },
+            showConversationHistory: { [weak self] in self?.showConversationHistory() },
             closeSession: { [weak self] in self?.requestClose($0) },
             toggleSidebar: { [weak self] in self?.toggleSidebar() },
             toggleFiles: { [weak self] in self?.toggleFiles() },
@@ -484,6 +485,32 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// Opens where you are: the focused pane's folder, or home when there is no session yet.
     func newSession(in directory: String? = nil) {
         store.create(directory: directory ?? store.selected?.panes.focused.workingDirectory ?? NSHomeDirectory(), run: agents.startCommand)
+    }
+
+    func showConversationHistory() {
+        guard let window, window.attachedSheet == nil else { return }
+        let sheet = NSWindow(contentRect: .zero, styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: true)
+        let close = { [weak window, weak sheet] in
+            guard let sheet else { return }
+            window?.endSheet(sheet)
+        }
+        var chosen: ConversationHistory.Entry?
+        let size = window.contentView?.bounds.size ?? window.frame.size
+        let view = ConversationHistorySheet(palette: state.palette, agents: ConversationHistory.enabledAgents(), availableSize: size, resume: { entry in
+            chosen = entry
+            close()
+        }, close: close)
+        let host = NSHostingController(rootView: view)
+        host.sizingOptions = [.preferredContentSize]
+        sheet.contentViewController = host
+        window.beginSheet(sheet) { [weak self] _ in
+            guard let self, let chosen else { return }
+            do {
+                try store.continueConversation(chosen)
+            } catch {
+                showError("Couldn't continue the conversation", String(describing: error))
+            }
+        }
     }
 
     /// Slides the panels. The terminals keep their size until the end, so a program redraws once rather than on every frame.

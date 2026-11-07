@@ -123,6 +123,18 @@ private func home(_ folders: [String: [String]]) throws -> URL {
     #expect(AgentFolder(log: "/h/.pi/agent/sessions/--h-app--/2026-05-03_019d.jsonl") == pi)
 }
 
+@Test func findsKiroBeforeItHasAConfigFolder() throws {
+    let h = try home([".local/bin": ["kiro-cli"]])
+    defer { try? FileManager.default.removeItem(at: h) }
+    let executable = h.appendingPathComponent(".local/bin/kiro-cli").path
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable)
+    let kiro = try #require(AgentFolder.find(home: h, environment: [:]).first { $0.kind == .kiro })
+    #expect(kiro.label == "Kiro CLI")
+    #expect(kiro.command() == "'\(executable)' chat")
+    #expect(kiro.command(task: "--it's ready") == "'\(executable)' chat -- " + #"'--it'\''s ready'"#)
+    #expect(AgentSetup.setup(for: kiro) == nil)
+}
+
 @Test func readsTheKindFromASavedChoice() {
     #expect(AgentFolder.kind(of: "codex") == .codex)
     #expect(AgentFolder.kind(of: "/Users/me/.claude") == .claude)

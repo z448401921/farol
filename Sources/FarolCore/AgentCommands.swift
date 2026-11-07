@@ -58,6 +58,8 @@ public enum AgentCommands {
             all = ([folder.directory] + (project.map { [$0] } ?? [])).flatMap { base in
                 markdown(in: base.appendingPathComponent("prompts")) + skills(in: base.appendingPathComponent("skills"), prefix: "skill:")
             }
+        case .kiro:
+            all = []
         }
         var seen = Set<String>()
         return all.filter { seen.insert(($0.mention ? "$" : "/") + $0.name).inserted }.sorted { $0.name < $1.name }

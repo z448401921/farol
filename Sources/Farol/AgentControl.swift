@@ -207,7 +207,9 @@ final class AgentControl {
         let callerAgent = calling.flatMap { session in session.panes.terminals.first { $0.id == caller }.flatMap(session.agent) }
         let folders = AgentFolder.find()
         let wanted = (agent ?? callerAgent)?.lowercased()
-        guard let folder = folders.first(where: { [$0.kind.rawValue, $0.id.lowercased(), $0.label.lowercased()].contains(wanted) }) ?? (agent == nil ? folders.first : nil) else {
+        guard let folder = folders.first(where: {
+            [$0.kind.rawValue, $0.kind.executableName, $0.id.lowercased(), $0.label.lowercased()].contains(wanted)
+        }) ?? (agent == nil ? folders.first : nil) else {
             return connection.reply(ControlReply.failed(agent.map { "No agent is called \($0). Use \(AgentFolder.Kind.allCases.map(\.rawValue).joined(separator: ", ")), connected in Settings → Agents." }
                 ?? "Connect an agent in Settings → Agents first."))
         }

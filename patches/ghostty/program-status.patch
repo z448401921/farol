@@ -1,0 +1,280 @@
+diff --git a/src/terminal/osc.zig b/src/terminal/osc.zig
+--- a/src/terminal/osc.zig
++++ b/src/terminal/osc.zig
+@@ -166,6 +166,23 @@
+ 
+     /// Kitty desktop notifications (OSC 99)
+     kitty_desktop_notification: KittyDesktopNotification,
++
++    program_status: ProgramStatus,
++
++    pub const ProgramStatus = struct {
++        data: []const u8,
++        terminator: Terminator,
++
++        pub const C = extern struct {
++            data: [*]const u8,
++            len: usize,
++            terminator: Terminator.C,
++        };
++
++        pub fn cval(self: ProgramStatus) C {
++            return .{ .data = self.data.ptr, .len = self.data.len, .terminator = self.terminator.cval() };
++        }
++    };
+ 
+     pub const SemanticPrompt = parsers.semantic_prompt.Command;
+ 
+@@ -206,6 +223,7 @@
+             "kitty_dnd_protocol",
+             "context_signal",
+             "kitty_desktop_notification",
++            "program_status",
+         },
+     );
+ 
+@@ -386,6 +404,9 @@
+         @"133",
+         @"552",
+         @"777",
++        @"75",
++        @"750",
++        @"7501",
+         @"1337",
+         @"5522",
+     };
+@@ -454,6 +475,7 @@
+             .kitty_dnd_protocol,
+             .kitty_desktop_notification,
+             .context_signal,
++            .program_status,
+             => {},
+         }
+ 
+@@ -814,10 +836,22 @@
+             .@"7" => switch (c) {
+                 ';' => self.captureTrailing(.fixed),
+                 '2' => self.state = .@"72",
++                '5' => self.state = .@"75",
+                 '7' => self.state = .@"77",
+                 else => self.state = .invalid,
+             },
+ 
++            .@"75" => switch (c) {
++                '0' => self.state = .@"750",
++                else => self.state = .invalid,
++            },
++
++            .@"750" => switch (c) {
++                '1' => self.state = .@"7501",
++                else => self.state = .invalid,
++            },
++
++            .@"7501",
+             .@"72" => switch (c) {
+                 ';' => self.captureTrailing(.allocating),
+                 else => self.state = .invalid,
+@@ -948,7 +982,15 @@
+ 
+             .@"72" => parsers.kitty_dnd_protocol.parse(self, terminator_ch),
+ 
+-            .@"77" => null,
++            .@"75", .@"750", .@"77" => null,
++
++            .@"7501" => program_status: {
++                const capture = if (self.capture) |*value| value else break :program_status null;
++                const data = capture.trailing();
++                if (data.len > 4087) break :program_status null;
++                self.command = .{ .program_status = .{ .data = data, .terminator = .init(terminator_ch) } };
++                break :program_status &self.command;
++            },
+ 
+             .@"99" => parsers.kitty_desktop_notification.parse(self, terminator_ch),
+ 
+diff --git a/src/terminal/stream.zig b/src/terminal/stream.zig
+--- a/src/terminal/stream.zig
++++ b/src/terminal/stream.zig
+@@ -120,6 +120,7 @@
+     report_pwd: ReportPwd,
+     show_desktop_notification: ShowDesktopNotification,
+     progress_report: osc.Command.ProgressReport,
++    program_status: osc.Command.ProgramStatus,
+     start_hyperlink: StartHyperlink,
+     clipboard_contents: ClipboardContents,
+     mouse_shape: MouseShape,
+@@ -222,6 +223,7 @@
+             "report_pwd",
+             "show_desktop_notification",
+             "progress_report",
++            "program_status",
+             "start_hyperlink",
+             "clipboard_contents",
+             "mouse_shape",
+@@ -2692,6 +2694,8 @@
+                     self.handler.vt(.end_hyperlink, {});
+                 },
+ 
++                .program_status => |v| self.handler.vt(.program_status, v),
++
+                 .conemu_progress_report => |v| {
+                     self.handler.vt(.progress_report, v);
+                 },
+diff --git a/src/terminal/stream_terminal.zig b/src/terminal/stream_terminal.zig
+--- a/src/terminal/stream_terminal.zig
++++ b/src/terminal/stream_terminal.zig
+@@ -560,6 +560,7 @@
+             .dcs_unhook => try self.dcsUnhook(),
+ 
+             // Have no terminal-modifying effect
++            .program_status,
+             .title_push,
+             .title_pop,
+             .resize_window,
+diff --git a/src/termio/stream_handler.zig b/src/termio/stream_handler.zig
+--- a/src/termio/stream_handler.zig
++++ b/src/termio/stream_handler.zig
+@@ -338,6 +338,7 @@
+             .report_pwd => try self.reportPwd(value.url),
+             .show_desktop_notification => try self.showDesktopNotification(value.title, value.body),
+             .progress_report => self.progressReport(value),
++            .program_status => try self.programStatus(value),
+             .start_hyperlink => try self.startHyperlink(value.uri, value.id),
+             .clipboard_contents => try self.clipboardContents(value.kind, value.data),
+             .semantic_prompt => try self.semanticPrompt(value),
+@@ -1889,6 +1890,19 @@
+         // the read() syscall.
+     }
+ 
++    fn programStatus(self: *StreamHandler, report: terminal.osc.Command.ProgramStatus) !void {
++        if (std.mem.eql(u8, report.data, "?")) {
++            self.messageWriter(.{ .write_stable = switch (report.terminator) {
++                .st => "\x1b]7501;?\x1b\\",
++                .bel => "\x1b]7501;?\x07",
++            } });
++            return;
++        }
++
++        const request = try apprt.surface.Message.WriteReq.init(self.alloc, report.data);
++        self.surfaceMessageWriter(.{ .program_status = request });
++    }
++
+     /// Display a GUI progress report.
+     fn progressReport(self: *StreamHandler, report: terminal.osc.Command.ProgressReport) void {
+         self.surfaceMessageWriter(.{ .progress_report = report });
+diff --git a/src/apprt/surface.zig b/src/apprt/surface.zig
+--- a/src/apprt/surface.zig
++++ b/src/apprt/surface.zig
+@@ -139,6 +139,8 @@
+ 
+     /// Report the progress of an action using a GUI element
+     progress_report: terminal.osc.Command.ProgressReport,
++
++    program_status: WriteReq,
+ 
+     /// A command has started in the shell, start a timer.
+     start_command,
+diff --git a/src/App.zig b/src/App.zig
+--- a/src/App.zig
++++ b/src/App.zig
+@@ -517,6 +517,8 @@
+     // a simple linear search here.
+     if (self.hasSurface(surface)) {
+         try surface.handleMessage(msg);
++    } else if (msg == .program_status) {
++        msg.program_status.deinit();
+     }
+ 
+     // Window was not found, it probably quit before we handled the message.
+diff --git a/src/Surface.zig b/src/Surface.zig
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -1142,6 +1142,16 @@
+             };
+         },
+ 
++        .program_status => |report| {
++            defer report.deinit();
++            const data = report.slice();
++            _ = try self.rt_app.performAction(
++                .{ .surface = self },
++                .program_status,
++                .{ .data = data.ptr, .len = data.len },
++            );
++        },
++
+         .progress_report => |v| {
+             _ = self.rt_app.performAction(
+                 .{ .surface = self },
+diff --git a/src/apprt/action.zig b/src/apprt/action.zig
+--- a/src/apprt/action.zig
++++ b/src/apprt/action.zig
+@@ -363,6 +363,8 @@
+     /// and apprts may ignore it, for example if the surface is in a
+     /// split or the window is fullscreen.
+     resize_window: ResizeWindow,
++
++    program_status: extern struct { data: [*]const u8, len: usize },
+ 
+     /// Sync with: ghostty_action_tag_e
+     pub const Key = enum(c_int) {
+@@ -436,6 +438,7 @@
+         copy_title_to_clipboard,
+         move_tab_to_new_window,
+         resize_window,
++        program_status,
+ 
+         test "ghostty.h Action.Key" {
+             try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");
+diff --git a/src/apprt/gtk/class/application.zig b/src/apprt/gtk/class/application.zig
+--- a/src/apprt/gtk/class/application.zig
++++ b/src/apprt/gtk/class/application.zig
+@@ -755,6 +755,7 @@
+             .present_terminal => return Action.presentTerminal(target),
+ 
+             .progress_report => return Action.progressReport(target, value),
++            .program_status => return false,
+ 
+             .prompt_title => return Action.promptTitle(target, value),
+ 
+diff --git a/include/ghostty.h b/include/ghostty.h
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -1016,6 +1016,7 @@
+   GHOSTTY_ACTION_COPY_TITLE_TO_CLIPBOARD,
+   GHOSTTY_ACTION_MOVE_TAB_TO_NEW_WINDOW,
+   GHOSTTY_ACTION_RESIZE_WINDOW,
++  GHOSTTY_ACTION_PROGRAM_STATUS,
+ } ghostty_action_tag_e;
+ 
+ typedef union {
+@@ -1060,6 +1061,7 @@
+   ghostty_action_search_selected_s search_selected;
+   ghostty_action_readonly_e readonly;
+   ghostty_action_open_config_e open_config;
++  struct { const uint8_t *data; size_t len; } program_status;
+ } ghostty_action_u;
+ 
+ typedef struct {
+@@ -1239,6 +1241,11 @@
+                                               ghostty_selection_s,
+                                               ghostty_text_s*);
+ GHOSTTY_API void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
++GHOSTTY_API bool ghostty_surface_read_vt_screen(ghostty_surface_t, ghostty_text_s*);
++GHOSTTY_API bool ghostty_surface_read_vt_history(ghostty_surface_t, uint32_t, ghostty_text_s*);
++GHOSTTY_API bool ghostty_surface_tap_start(ghostty_surface_t, uint32_t, ghostty_text_s*, ghostty_text_s*);
++GHOSTTY_API int32_t ghostty_surface_tap_read(ghostty_surface_t, ghostty_text_s*);
++GHOSTTY_API void ghostty_surface_tap_stop(ghostty_surface_t);
+ 
+ #ifdef __APPLE__
+ GHOSTTY_API void ghostty_surface_set_display_id(ghostty_surface_t, uint32_t);
+diff --git a/include/ghostty/vt/osc.h b/include/ghostty/vt/osc.h
+--- a/include/ghostty/vt/osc.h
++++ b/include/ghostty/vt/osc.h
+@@ -67,6 +67,7 @@
+   GHOSTTY_OSC_COMMAND_KITTY_DND_PROTOCOL = 24,
+   GHOSTTY_OSC_COMMAND_CONTEXT_SIGNAL = 25,
+   GHOSTTY_OSC_COMMAND_KITTY_DESKTOP_NOTIFICATION = 26,
++  GHOSTTY_OSC_COMMAND_PROGRAM_STATUS = 27,
+   GHOSTTY_OSC_COMMAND_TYPE_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
+ } GhosttyOscCommandType;
+ 

@@ -15,9 +15,10 @@ help:
 	@echo "make icon       regenerate the app icon from assets/icon-source.png"
 	@echo "make clean      remove build output (keeps libghostty)"
 
-# Built once, then reused. Delete vendor/ to rebuild it.
-$(GHOSTTY):
+# Reused until the Ghostty revision or patches change.
+$(GHOSTTY): scripts/build-ghostty.sh $(wildcard patches/ghostty/*.patch)
 	./scripts/build-ghostty.sh
+	touch "$@"
 
 build: $(GHOSTTY)
 	./scripts/bundle.sh debug

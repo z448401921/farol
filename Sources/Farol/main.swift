@@ -71,9 +71,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if quitConfirmed { return .terminateNow }
         windowController.confirmQuit { ok in
-            self.quitConfirmed = ok
-            if ok { self.store.prepareToQuit() }
-            NSApp.reply(toApplicationShouldTerminate: ok)
+            guard ok else {
+                NSApp.reply(toApplicationShouldTerminate: false)
+                return
+            }
+            self.store.prepareToQuit {
+                self.quitConfirmed = true
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
         }
         return .terminateLater
     }
@@ -110,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         windowController.handle(.reloadConfig)
     }
     @objc func newTask(_ sender: Any?) { windowController.newTask() }
+    @objc func showConversationHistory(_ sender: Any?) { windowController.showConversationHistory() }
     @objc func namePane(_ sender: Any?) { windowController.namePane() }
     @objc func showRunMenu(_ sender: Any?) { windowController.showRunMenu() }
     @objc func find(_ sender: Any?) { windowController.find() }
@@ -220,6 +226,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         sessions.addItem(withTitle: "Previous Session", action: #selector(previousSession), keyEquivalent: "[")
             .keyEquivalentModifierMask = [.command, .shift]
         sessions.addItem(withTitle: "Switch Session…", action: #selector(switchSession), keyEquivalent: "p")
+        sessions.addItem(withTitle: "Conversation History…", action: #selector(showConversationHistory), keyEquivalent: "H")
         sessions.addItem(.separator())
         for i in 0..<9 {
             let item = sessions.addItem(withTitle: "Session \(i + 1)", action: #selector(selectSession), keyEquivalent: "\(i + 1)")

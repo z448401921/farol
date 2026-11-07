@@ -46,6 +46,7 @@ final class WindowState: ObservableObject {
 struct Commands {
     let newSession: () -> Void
     let newTask: () -> Void
+    let showConversationHistory: () -> Void
     let closeSession: (Session) -> Void
     let toggleSidebar: () -> Void
     let toggleFiles: () -> Void

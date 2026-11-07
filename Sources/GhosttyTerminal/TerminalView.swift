@@ -7,6 +7,8 @@ public final class TerminalView: NSView {
 
     // Events from the running program. All called on the main thread.
     public var onTitleChange: ((String) -> Void)?
+    public var onCommandFinished: (() -> Void)?
+    public var onProgramStatus: ((String) -> Void)?
     public var onWorkingDirectoryChange: ((String) -> Void)?
     public var onNotification: ((_ title: String, _ body: String) -> Void)?
     public var onBell: (() -> Void)?
@@ -38,10 +40,11 @@ public final class TerminalView: NSView {
     }
 
     /// The program in front, like `codex` while it runs or the shell at its prompt, and when it started.
-    public var foregroundProgram: (name: String, started: Date)? {
+    public var foregroundProgram: (name: String, started: Date, pid: Int32)? {
         guard let info = foreground else { return nil }
         let start = info.kp_proc.p_un.__p_starttime
-        return (Self.name(of: info), Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000))
+        return (Self.name(of: info), Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000),
+                info.kp_proc.p_pid)
     }
 
     /// A program the shell started is in front, rather than the shell at its prompt.
@@ -184,6 +187,13 @@ public final class TerminalView: NSView {
             // The shell no longer retitles at its prompt, so a title the program left behind would stay for good.
             title = ""
             onTitleChange?(title)
+            onCommandFinished?()
+        case GHOSTTY_ACTION_PROGRAM_STATUS:
+            let report = action.action.program_status
+            guard let data = report.data, let status = String(bytes: UnsafeBufferPointer(start: data, count: report.len), encoding: .utf8) else {
+                return false
+            }
+            onProgramStatus?(status)
         case GHOSTTY_ACTION_PWD:
             guard let pwd = action.action.pwd.pwd else { return false }
             workingDirectory = String(cString: pwd)

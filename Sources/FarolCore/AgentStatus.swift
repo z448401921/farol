@@ -140,6 +140,72 @@ public struct AgentConversation: Codable, Equatable, Sendable {
     }
 }
 
+/// What to restart in a saved pane. Older layouts only recorded `id` and `log`.
+public struct PaneResume: Codable, Equatable, Sendable {
+    public let id: String
+    private let log: String?
+    private let kind: String?
+    private let configDirectory: String?
+    private let originalDirectory: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, log, kind, configDirectory
+        case originalDirectory = "workingDirectory"
+    }
+
+    public init(_ conversation: AgentConversation) {
+        id = conversation.id
+        log = conversation.log
+        kind = nil
+        configDirectory = nil
+        originalDirectory = nil
+    }
+
+    public init?(kiroID: String, configDirectory: String? = nil, workingDirectory: String? = nil) {
+        guard Self.isKiroID(kiroID), configDirectory.map(Self.isAbsolutePath) != false,
+              workingDirectory.map(Self.isAbsolutePath) != false else { return nil }
+        id = kiroID
+        log = nil
+        kind = AgentFolder.Kind.kiro.rawValue
+        self.configDirectory = configDirectory
+        originalDirectory = workingDirectory
+    }
+
+    public var isKiro: Bool { kind == AgentFolder.Kind.kiro.rawValue }
+
+    public var workingDirectory: String? {
+        guard isKiro, let originalDirectory, Self.isAbsolutePath(originalDirectory) else { return nil }
+        return originalDirectory
+    }
+
+    public var loggedConversation: AgentConversation? {
+        guard kind == nil, let log else { return nil }
+        return AgentConversation(id: id, log: log)
+    }
+
+    public func command(fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> String? {
+        if let conversation = loggedConversation {
+            guard fileExists(conversation.log), let agent = AgentFolder(log: conversation.log) else { return nil }
+            return agent.resume(conversation.id)
+        }
+        guard isKiro, Self.isKiroID(id), configDirectory.map(Self.isAbsolutePath) != false,
+              originalDirectory.map(Self.isAbsolutePath) != false else { return nil }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let agent = AgentFolder(kind: .kiro, directory: home.appendingPathComponent(AgentFolder.Kind.kiro.defaultFolder))
+        let environment = configDirectory.map { "KIRO_HOME=\(NewTask.shellQuoted($0)) " } ?? ""
+        return environment + agent.command() + " --v3 " + agent.kind.resume(id).joined(separator: " ")
+    }
+
+    static func isKiroID(_ id: String) -> Bool {
+        let uuid = id.hasPrefix("sess_") ? String(id.dropFirst("sess_".count)) : id
+        return uuid.utf8.count == 36 && UUID(uuidString: uuid) != nil
+    }
+
+    private static func isAbsolutePath(_ path: String) -> Bool {
+        path.hasPrefix("/") && path.rangeOfCharacter(from: .controlCharacters) == nil
+    }
+}
+
 /// Listens on a Unix socket for status reports. Each client sends one JSON line and disconnects.
 /// The socket is readable by the current user only.
 public final class StatusServer {
